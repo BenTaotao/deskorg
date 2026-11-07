@@ -18,8 +18,8 @@ from pathlib import Path
 COMPANY = "白起"
 PRODUCT = "DeskOrg 桌面整理与美化"
 DESCRIPTION = "DeskOrg 桌面整理、桌面框框与美化工具"
-VERSION = "1.1.0"
-VERSION_NUM = (1, 1, 0, 0)
+VERSION = "1.1.1"
+VERSION_NUM = (1, 1, 1, 0)
 
 
 def align4(data: bytes) -> bytes:

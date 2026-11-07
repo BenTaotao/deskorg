@@ -122,7 +122,7 @@ RT_ICON / RT_GROUP_ICON 写入 exe，两者都需要 Python + Pillow。
 | 公司 | 白起 |
 | 产品名称 | DeskOrg 桌面整理与美化 |
 | 文件说明 | DeskOrg 桌面整理、桌面框框与美化工具 |
-| 文件版本 | 1.1.0.0 |
+| 文件版本 | 1.1.1.0 |
 | 版权 | Copyright © 2026 白起 |
 
 > 这是文件属性元数据，不是数字签名。当前 exe 没有 Authenticode 签名，因此 Windows SmartScreen / UAC 仍可能显示“未知发布者”。要让系统级“发行者”显示发布者名称，需要用受信任的代码签名证书签名，例如：
