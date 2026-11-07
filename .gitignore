@@ -1,0 +1,9 @@
+/target
+.idea/
+.openidea/
+*.log
+dist/*.pdb
+dist/*.ilk
+Thumbs.db
+.DS_Store
+docs/fences.jpg
