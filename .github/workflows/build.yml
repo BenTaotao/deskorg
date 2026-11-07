@@ -1,0 +1,51 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: python -m pip install --upgrade pip pillow
+
+      - name: Test
+        run: cargo test
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Stamp version info and icon
+        run: |
+          python tools/set_version_info.py target/release/deskorg.exe
+          python tools/set_icon.py target/release/deskorg.exe
+
+      - name: SHA256
+        run: Get-FileHash target/release/deskorg.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload unsigned artifact
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskOrg-unsigned
+          path: target/release/deskorg.exe
+          if-no-files-found: error

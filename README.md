@@ -226,6 +226,14 @@ tools/
 - 未签名构建在部分受管电脑上会被 SmartScreen / Smart App Control 拦截。
 - 若把程序放进强制低完整性的沙箱运行，Windows 会阻止它向 Explorer 发送图标开关命令；请把 `DeskOrg.exe` 放在普通本地目录并直接运行。
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for team roles, privacy, system changes, and the release signing process.
+
+Current release binaries are unsigned while the project applies for SignPath Foundation code signing.
+
 ## License
 
 MIT
