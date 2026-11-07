@@ -4,7 +4,7 @@ version = "1.1.0"
 edition = "2021"
 rust-version = "1.95"
 description = "DeskOrg - 桌面整理、桌面框框与美化工具"
-authors = ["陕西十方数联科技有限公司"]
+authors = ["白起"]
 license = "MIT"
 repository = "https://github.com/BenTaotao/deskorg"
 

@@ -15,7 +15,7 @@ import sys
 from ctypes import wintypes
 from pathlib import Path
 
-COMPANY = "陕西十方数联科技有限公司"
+COMPANY = "白起"
 PRODUCT = "DeskOrg 桌面整理与美化"
 DESCRIPTION = "DeskOrg 桌面整理、桌面框框与美化工具"
 VERSION = "1.1.0"

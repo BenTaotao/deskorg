@@ -2,7 +2,7 @@
 
 一个用 Rust 编写的 Windows 桌面整理与美化工具：把桌面上散落的文件按类型收进分类文件夹，再把分类结果装进可以自由摆放的透明桌面框框。框框模式下原生桌面图标始终保持隐藏，双击桌面空白处或按快捷键，会让**所有框框一起显示或一起隐藏**，不会再切换成回收站等原生图标。
 
-**发行者：陕西十方数联科技有限公司**
+**发行者：白起**
 
 ![DeskOrg 深色主题](docs/overview-dark.png)
 
@@ -119,13 +119,13 @@ RT_ICON / RT_GROUP_ICON 写入 exe，两者都需要 Python + Pillow。
 
 | 字段 | 内容 |
 | --- | --- |
-| 公司 | 陕西十方数联科技有限公司 |
+| 公司 | 白起 |
 | 产品名称 | DeskOrg 桌面整理与美化 |
 | 文件说明 | DeskOrg 桌面整理、桌面框框与美化工具 |
 | 文件版本 | 1.1.0.0 |
-| 版权 | Copyright © 2026 陕西十方数联科技有限公司 |
+| 版权 | Copyright © 2026 白起 |
 
-> 这是文件属性元数据，不是数字签名。当前 exe 没有 Authenticode 签名，因此 Windows SmartScreen / UAC 仍可能显示“未知发布者”。要让系统级“发行者”显示公司名称，需要用受信任的代码签名证书签名，例如：
+> 这是文件属性元数据，不是数字签名。当前 exe 没有 Authenticode 签名，因此 Windows SmartScreen / UAC 仍可能显示“未知发布者”。要让系统级“发行者”显示发布者名称，需要用受信任的代码签名证书签名，例如：
 >
 > ```powershell
 > signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `

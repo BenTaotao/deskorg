@@ -3037,7 +3037,7 @@ impl DeskOrgApp {
             );
             ui.add_space(6.0);
             ui.label(
-                RichText::new("发行者：陕西十方数联科技有限公司")
+                RichText::new("发行者：白起")
                     .size(11.0)
                     .color(p.text),
             );
