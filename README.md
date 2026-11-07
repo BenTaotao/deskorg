@@ -230,7 +230,7 @@ tools/
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
 
-See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for team roles, privacy, system changes, and the release signing process.
+See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for team roles, system changes, and the release signing process. Privacy details are in [PRIVACY.md](PRIVACY.md).
 
 Current release binaries are unsigned while the project applies for SignPath Foundation code signing.
 

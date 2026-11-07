@@ -33,6 +33,8 @@ This program will not transfer any information to other networked systems unless
 
 DeskOrg has no accounts, telemetry, analytics, cloud sync, or update service. Configuration and undo history are stored locally in `%APPDATA%\DeskOrg`. The optional auto-start setting writes the current user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value and can be disabled in the app.
 
+See [PRIVACY.md](PRIVACY.md) for the full privacy policy.
+
 ## System changes and uninstallation
 
 DeskOrg is a portable application. It does not install a service or driver.
