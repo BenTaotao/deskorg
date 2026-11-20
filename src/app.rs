@@ -165,6 +165,8 @@ pub struct DeskOrgApp {
     fence_viewports_created: HashSet<u64>,
     clock_viewport_created: bool,
     clock_was_showing: bool,
+    /// 程序化移动时钟；移动当帧不要用回读的窗口位置覆盖它。
+    clock_move_to: Option<[f32; 2]>,
     last_config_save: Instant,
     new_fence_open: bool,
     new_fence_category: Category,
@@ -322,6 +324,7 @@ impl DeskOrgApp {
             fence_viewports_created: HashSet::new(),
             clock_viewport_created: false,
             clock_was_showing: false,
+            clock_move_to: None,
             last_config_save: Instant::now(),
             new_fence_open: false,
             new_fence_category: Category::Image,
@@ -362,6 +365,19 @@ impl DeskOrgApp {
 
     fn palette(&self) -> Palette {
         theme::palette(self.config.light_theme, self.config.accent)
+    }
+
+    /// 主显示器右上角（逻辑点）。多屏时不要按整个虚拟桌面定位，
+    /// 否则时钟会跑到最右侧副屏，甚至落到屏幕外。
+    fn default_clock_position(&self, ctx: &egui::Context, size: Vec2) -> [f32; 2] {
+        let scale = ctx.pixels_per_point().max(0.1);
+        if let Some((x, y, width, _height)) = shell::primary_work_area() {
+            return [
+                (x + width) / scale - size.x - 40.0,
+                y / scale + 40.0,
+            ];
+        }
+        clock::default_position(self.desktop_origin, self.desktop_size, size)
     }
 
     fn notify(&mut self, text: impl Into<String>, kind: NoticeKind) {
@@ -2504,6 +2520,7 @@ impl DeskOrgApp {
         let scale = self.config.clock.scale;
         let opacity = self.config.clock.opacity;
         let mut toggle = false;
+        let mut reset_position = false;
 
         theme::card_frame(*p).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -2632,6 +2649,17 @@ impl DeskOrgApp {
                 "日期后面显示“周X”，例如 2026-11-20 周五",
                 &mut show_weekday,
             );
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("位置").size(12.0).color(p.muted));
+                if widgets::secondary_button(ui, p, "重置到主屏右上角", 152.0).clicked() {
+                    reset_position = true;
+                }
+                ui.label(
+                    RichText::new("也可以直接拖动时钟本体")
+                        .size(10.0)
+                        .color(p.faint),
+                );
+            });
             ui.label(
                 RichText::new("背景 0% 时完全透明，只留下数字。")
                     .size(10.0)
@@ -2643,11 +2671,8 @@ impl DeskOrgApp {
             self.config.clock.enabled = !self.config.clock.enabled;
             if self.config.clock.enabled && self.config.clock.pos.is_none() {
                 let size = self.config.clock.size();
-                self.config.clock.pos = Some(clock::default_position(
-                    self.desktop_origin,
-                    self.desktop_size,
-                    size,
-                ));
+                let pos = self.default_clock_position(ui.ctx(), size);
+                self.config.clock.pos = Some(pos);
             }
             self.save_config();
             ui.ctx().request_repaint();
@@ -2668,6 +2693,14 @@ impl DeskOrgApp {
         if weekday_changed {
             self.config.clock.show_weekday = show_weekday;
             self.config_dirty = true;
+        }
+        if reset_position {
+            let size = self.config.clock.size();
+            let pos = self.default_clock_position(ui.ctx(), size);
+            self.config.clock.pos = Some(pos);
+            self.clock_move_to = Some(pos);
+            self.save_config();
+            ui.ctx().request_repaint();
         }
     }
 
@@ -2947,14 +2980,23 @@ impl DeskOrgApp {
         }
 
         self.config.clock.clamp();
-        if self.config.clock.pos.is_none() {
-            let size = self.config.clock.size();
-            self.config.clock.pos = Some(clock::default_position(
-                self.desktop_origin,
-                self.desktop_size,
-                size,
-            ));
+        let clock_size = self.config.clock.size();
+        // 拔掉副屏后旧位置可能整个落在虚拟桌面之外，先把时钟拉回主屏。
+        let needs_reset = self.config.clock.pos.is_none()
+            || (self.desktop_size.x > 0.0
+                && self.desktop_size.y > 0.0
+                && !clock::position_is_visible(
+                    self.config.clock.pos.unwrap_or([0.0, 0.0]),
+                    clock_size,
+                    self.desktop_origin,
+                    self.desktop_size,
+                ));
+        let mut move_to = self.clock_move_to.take();
+        if needs_reset {
+            let pos = self.default_clock_position(ctx, clock_size);
+            self.config.clock.pos = Some(pos);
             self.config_dirty = true;
+            move_to = Some(pos);
         }
 
         let clock = self.config.clock.clone();
@@ -2995,7 +3037,14 @@ impl DeskOrgApp {
         if self.config.clock.enabled {
             self.clock_was_showing = true;
             shell::set_clock_guard(true, clock.topmost);
-            if let Some(rect) = result.0 {
+            if let Some(pos) = move_to {
+                // 重置位置时主动把窗口移过去；否则回读的旧位置会在同一帧
+                // 把配置覆盖回去，按钮看起来毫无反应。
+                ctx.send_viewport_cmd_to(
+                    clock::viewport_id(),
+                    egui::ViewportCommand::OuterPosition(egui::pos2(pos[0], pos[1])),
+                );
+            } else if let Some(rect) = result.0 {
                 if let Some(pos) = &mut self.config.clock.pos {
                     if (rect.min.x - pos[0]).abs() > 1.0 || (rect.min.y - pos[1]).abs() > 1.0 {
                         *pos = [rect.min.x, rect.min.y];

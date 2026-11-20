@@ -82,6 +82,17 @@ pub fn default_position(origin: Vec2, desktop: Vec2, size: Vec2) -> [f32; 2] {
     [origin.x + width - size.x - 40.0, origin.y + 40.0]
 }
 
+/// Whether any part of the clock intersects the current virtual desktop.
+/// A saved position can fall outside after unplugging a monitor.
+pub fn position_is_visible(pos: [f32; 2], size: Vec2, origin: Vec2, desktop: Vec2) -> bool {
+    if desktop.x <= 0.0 || desktop.y <= 0.0 {
+        return true;
+    }
+    let rect = egui::Rect::from_min_size(Pos2::new(pos[0], pos[1]), size);
+    let screen = egui::Rect::from_min_size(Pos2::new(origin.x, origin.y), desktop);
+    rect.intersects(screen)
+}
+
 /// Paint the clock face and start the native drag on mouse-down.
 pub fn draw(ui: &mut Ui, clock: &Clock) {
     let rect = ui.max_rect();
@@ -314,6 +325,24 @@ mod tests {
         );
         assert!((pos[0] - (-1920.0 + 3840.0 - 340.0 - 40.0)).abs() < 1e-6);
         assert!((pos[1] - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn position_visibility_handles_unplugged_monitors() {
+        let size = Vec2::new(340.0, 136.0);
+        let origin = Vec2::ZERO;
+        let desktop = Vec2::new(1920.0, 1080.0);
+
+        assert!(position_is_visible([1500.0, 100.0], size, origin, desktop));
+        assert!(!position_is_visible([4420.0, 40.0], size, origin, desktop));
+        assert!(!position_is_visible([-500.0, 40.0], size, origin, desktop));
+        // A secondary monitor to the left of the primary is still on-screen.
+        assert!(position_is_visible(
+            [-1800.0, 40.0],
+            size,
+            Vec2::new(-1920.0, 0.0),
+            Vec2::new(3840.0, 1080.0),
+        ));
     }
 
     #[test]

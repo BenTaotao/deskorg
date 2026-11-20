@@ -77,7 +77,8 @@ mod imp {
         WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_GETDESKWALLPAPER, SPI_SETDESKWALLPAPER,
+        SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_GETDESKWALLPAPER, SPI_GETWORKAREA,
+        SPI_SETDESKWALLPAPER,
     };
 
     const DESKTOP_TOGGLE_COMMAND: WPARAM = 0x7402;
@@ -661,6 +662,30 @@ mod imp {
         (width > 0 && height > 0).then_some((
             x as f32,
             y as f32,
+            width as f32,
+            height as f32,
+        ))
+    }
+
+    /// 主显示器的工作区（物理像素，已排除任务栏），用于把桌面时钟放到主屏。
+    pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
+        let mut rect = RECT::default();
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                &mut rect as *mut RECT as *mut c_void,
+                0,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        (width > 0 && height > 0).then_some((
+            rect.left as f32,
+            rect.top as f32,
             width as f32,
             height as f32,
         ))
@@ -1610,10 +1635,11 @@ mod imp {
 pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
-    is_elevated, relaunch_elevated, set_auto_start, set_clock_guard, set_desktop_icons_visible,
-    set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
-    set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
-    start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
+    is_elevated, primary_work_area, relaunch_elevated, set_auto_start, set_clock_guard,
+    set_desktop_icons_visible, set_double_click_enabled, set_fence_guard,
+    set_lock_screen_wallpaper, set_wallpaper, set_window_theme, show_main_window,
+    show_shell_context_menu, show_tray_balloon, start_tray, start_watchers, start_window_drag,
+    stop_tray, tray_alive, virtual_desktop_rect,
 };
 
 #[cfg(not(windows))]
@@ -1665,6 +1691,9 @@ mod imp {
     pub fn virtual_desktop_rect() -> Option<(f32, f32, f32, f32)> {
         None
     }
+    pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
+        None
+    }
     pub fn restore_icons_after_panic() {}
     pub fn show_tray_balloon(_title: &str, _text: &str, _is_error: bool) {}
     pub fn is_elevated() -> bool {
@@ -1688,10 +1717,11 @@ mod imp {
 pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
-    is_elevated, relaunch_elevated, set_auto_start, set_clock_guard, set_desktop_icons_visible,
-    set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
-    set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
-    start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
+    is_elevated, primary_work_area, relaunch_elevated, set_auto_start, set_clock_guard,
+    set_desktop_icons_visible, set_double_click_enabled, set_fence_guard,
+    set_lock_screen_wallpaper, set_wallpaper, set_window_theme, show_main_window,
+    show_shell_context_menu, show_tray_balloon, start_tray, start_watchers, start_window_drag,
+    stop_tray, tray_alive, virtual_desktop_rect,
 };
 
 #[cfg(all(test, windows))]
