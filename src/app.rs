@@ -140,6 +140,10 @@ pub struct DeskOrgApp {
     notice: Option<Notice>,
     wallpaper: Option<egui::TextureHandle>,
     wallpaper_job: Option<Receiver<(String, Result<egui::TextureHandle, String>)>>,
+    lock_wallpaper: Option<egui::TextureHandle>,
+    lock_wallpaper_job: Option<Receiver<(String, Result<egui::TextureHandle, String>)>>,
+    lock_wallpaper_error: Option<String>,
+    lock_job: Option<Receiver<Result<(), String>>>,
     logo: Option<egui::TextureHandle>,
     wallpaper_error: Option<String>,
     applied_window_theme: Option<bool>,
@@ -291,6 +295,10 @@ impl DeskOrgApp {
             notice: None,
             wallpaper: None,
             wallpaper_job: None,
+            lock_wallpaper: None,
+            lock_wallpaper_job: None,
+            lock_wallpaper_error: None,
+            lock_job: None,
             logo,
             wallpaper_error: None,
             applied_window_theme: None,
@@ -1055,6 +1063,142 @@ impl DeskOrgApp {
         }
     }
 
+    fn pick_lock_wallpaper(&mut self, ctx: &egui::Context) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("选择锁屏壁纸")
+            .add_filter("图片", &["png", "jpg", "jpeg", "bmp", "webp"])
+            .pick_file()
+        else {
+            return;
+        };
+        self.config.lock_screen_path = path.to_string_lossy().to_string();
+        self.save_config();
+        self.lock_wallpaper_error = None;
+
+        match self.start_lock_preview_load(ctx) {
+            Ok(()) => self.notify("正在载入锁屏图片…", NoticeKind::Info),
+            Err(error) => {
+                self.lock_wallpaper = None;
+                self.lock_wallpaper_error = Some(error.clone());
+                self.notify(error, NoticeKind::Error);
+            }
+        }
+    }
+
+    fn use_desktop_wallpaper(&mut self, ctx: &egui::Context) {
+        let source = self.config.wallpaper_path.trim().to_string();
+        if source.is_empty() {
+            self.notify("请先在「桌面壁纸」选择一张图片", NoticeKind::Info);
+            return;
+        }
+        self.config.lock_screen_path = source;
+        self.save_config();
+        self.lock_wallpaper_error = None;
+
+        match self.start_lock_preview_load(ctx) {
+            Ok(()) => self.notify("已使用桌面壁纸，点「应用为锁屏」生效", NoticeKind::Info),
+            Err(error) => {
+                self.lock_wallpaper = None;
+                self.lock_wallpaper_error = Some(error.clone());
+                self.notify(error, NoticeKind::Error);
+            }
+        }
+    }
+
+    fn start_lock_preview_load(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let path = self.config.lock_screen_path.trim().to_string();
+        if path.is_empty() {
+            self.lock_wallpaper = None;
+            return Ok(());
+        }
+        let worker_path = path.clone();
+        let worker_ctx = ctx.clone();
+        let (tx, rx) = channel();
+        std::thread::Builder::new()
+            .name("deskorg-lock-preview".to_owned())
+            .spawn(move || {
+                let result = load_wallpaper_texture(&worker_ctx, &worker_path);
+                let _ = tx.send((worker_path, result));
+            })
+            .map_err(|error| format!("无法启动锁屏图片载入：{error}"))?;
+        self.lock_wallpaper_job = Some(rx);
+        Ok(())
+    }
+
+    fn poll_lock_wallpaper_job(&mut self) {
+        let received = self.lock_wallpaper_job.as_ref().map(|job| job.try_recv());
+        match received {
+            Some(Ok((path, result))) => {
+                self.lock_wallpaper_job = None;
+                if path != self.config.lock_screen_path {
+                    return;
+                }
+                match result {
+                    Ok(texture) => {
+                        self.lock_wallpaper = Some(texture);
+                        self.lock_wallpaper_error = None;
+                    }
+                    Err(error) => {
+                        self.lock_wallpaper = None;
+                        self.lock_wallpaper_error = Some(error.clone());
+                        self.notify(error, NoticeKind::Error);
+                    }
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.lock_wallpaper_job = None;
+                self.notify("锁屏图片载入失败", NoticeKind::Error);
+            }
+            Some(Err(TryRecvError::Empty)) | None => {}
+        }
+    }
+
+    fn apply_lock_screen(&mut self) {
+        let path = PathBuf::from(self.config.lock_screen_path.trim());
+        if path.as_os_str().is_empty() {
+            self.notify("请先选择一张锁屏图片", NoticeKind::Info);
+            return;
+        }
+        if self.lock_job.is_some() {
+            self.notify("正在设置锁屏壁纸，请稍候", NoticeKind::Info);
+            return;
+        }
+        let (tx, rx) = channel();
+        match std::thread::Builder::new()
+            .name("deskorg-lock-screen".to_owned())
+            .spawn(move || {
+                let _ = tx.send(shell::set_lock_screen_wallpaper(&path));
+            }) {
+            Ok(_) => {
+                self.lock_job = Some(rx);
+                self.notify("正在设置锁屏壁纸…", NoticeKind::Info);
+            }
+            Err(error) => self.notify(
+                format!("无法启动锁屏壁纸任务：{error}"),
+                NoticeKind::Error,
+            ),
+        }
+    }
+
+    fn poll_lock_job(&mut self) {
+        let received = self.lock_job.as_ref().map(|job| job.try_recv());
+        match received {
+            Some(Ok(Ok(()))) => {
+                self.lock_job = None;
+                self.notify("锁屏壁纸已更新，按 Win + L 查看效果", NoticeKind::Success);
+            }
+            Some(Ok(Err(error))) => {
+                self.lock_job = None;
+                self.notify(error, NoticeKind::Error);
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.lock_job = None;
+                self.notify("锁屏壁纸设置失败", NoticeKind::Error);
+            }
+            Some(Err(TryRecvError::Empty)) | None => {}
+        }
+    }
+
     fn poll(&mut self, ctx: &egui::Context) {
         // 托盘线程意外退出时，把主窗口找回来，避免用户再也打不开界面。
         if self.tray_available && !self.force_quit && !shell::tray_alive() {
@@ -1109,6 +1253,8 @@ impl DeskOrgApp {
         self.poll_job(ctx);
         self.poll_scan_job();
         self.poll_wallpaper_job();
+        self.poll_lock_wallpaper_job();
+        self.poll_lock_job();
         self.poll_frost_job();
 
         if let Some((x, y, width, height)) = shell::virtual_desktop_rect() {
@@ -1157,7 +1303,11 @@ impl DeskOrgApp {
         if self.scan_job.is_some() {
             next_repaint = next_repaint.min(Duration::from_millis(300));
         }
-        if self.wallpaper_job.is_some() || self.frost_job.is_some() {
+        if self.wallpaper_job.is_some()
+            || self.frost_job.is_some()
+            || self.lock_wallpaper_job.is_some()
+            || self.lock_job.is_some()
+        {
             next_repaint = next_repaint.min(Duration::from_millis(200));
         }
         ctx.request_repaint_after(next_repaint);
@@ -2614,6 +2764,13 @@ impl DeskOrgApp {
         {
             let _ = self.start_wallpaper_preview_load(ui.ctx());
         }
+        if self.lock_wallpaper.is_none()
+            && self.lock_wallpaper_job.is_none()
+            && self.lock_wallpaper_error.is_none()
+            && !self.config.lock_screen_path.trim().is_empty()
+        {
+            let _ = self.start_lock_preview_load(ui.ctx());
+        }
 
         let texture = self.wallpaper.clone();
         let mut pick = false;
@@ -2679,6 +2836,81 @@ impl DeskOrgApp {
         }
         if apply {
             self.apply_wallpaper(ui.ctx());
+        }
+
+        ui.add_space(14.0);
+
+        let lock_texture = self.lock_wallpaper.clone();
+        let mut pick_lock = false;
+        let mut use_desktop = false;
+        let mut apply_lock = false;
+        theme::card_frame(*p).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("锁屏壁纸").size(16.0).strong().color(p.text));
+                    ui.label(
+                        RichText::new("锁屏和登录前的背景，可单独选择，也可复用桌面壁纸")
+                            .size(11.0)
+                            .color(p.faint),
+                    );
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::primary_button(ui, p, "应用为锁屏", 116.0).clicked() {
+                        apply_lock = true;
+                    }
+                    if widgets::secondary_button(ui, p, "使用桌面壁纸", 108.0).clicked() {
+                        use_desktop = true;
+                    }
+                    if widgets::secondary_button(ui, p, "选择图片", 96.0).clicked() {
+                        pick_lock = true;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+
+            let width = ui.available_width();
+            let preview_size = Vec2::new(width, (width * 0.36).clamp(190.0, 330.0));
+            if let Some(texture) = &lock_texture {
+                let image =
+                    egui::Image::new(egui::load::SizedTexture::new(texture.id(), preview_size))
+                        .fit_to_exact_size(preview_size)
+                        .corner_radius(14);
+                ui.add(image);
+            } else {
+                wallpaper_placeholder(ui, p, preview_size);
+            }
+
+            ui.add_space(6.0);
+            if let Some(error) = &self.lock_wallpaper_error {
+                ui.label(RichText::new(error).size(10.5).color(p.danger));
+            } else if self.config.lock_screen_path.is_empty() {
+                ui.label(
+                    RichText::new("未选择锁屏图片；可单独选择，或点「使用桌面壁纸」")
+                        .size(10.0)
+                        .color(p.faint),
+                );
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&self.config.lock_screen_path)
+                            .monospace()
+                            .size(10.0)
+                            .color(p.faint),
+                    )
+                    .truncate(),
+                );
+            }
+        });
+
+        if pick_lock {
+            self.pick_lock_wallpaper(ui.ctx());
+        }
+        if use_desktop {
+            self.use_desktop_wallpaper(ui.ctx());
+        }
+        if apply_lock {
+            self.apply_lock_screen();
         }
 
         ui.add_space(14.0);

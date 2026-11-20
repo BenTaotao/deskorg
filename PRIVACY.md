@@ -6,7 +6,7 @@ DeskOrg has no accounts, telemetry, analytics, cloud sync, or update service.
 
 ## Local data
 
-- `%APPDATA%\DeskOrg\config.json` — settings, fence layout, and the selected wallpaper path.
+- `%APPDATA%\DeskOrg\config.json` — settings, fence layout, and the selected wallpaper / lock screen image paths.
 - `%APPDATA%\DeskOrg\undo.json` — the undo log for the last file organization.
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DeskOrg` — only when the optional auto-start setting is enabled.
 

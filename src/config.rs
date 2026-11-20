@@ -29,6 +29,8 @@ pub struct Config {
     pub auto_hide_after_organize: bool,
     /// Last wallpaper picked in the app, used for the preview card.
     pub wallpaper_path: String,
+    /// Lock screen image; may point at the same file as `wallpaper_path`.
+    pub lock_screen_path: String,
     /// Free-floating transparent category boxes.
     pub fences: Vec<Fence>,
     /// Whether the fence desktop view is enabled.
@@ -52,6 +54,7 @@ impl Default for Config {
             restore_on_exit: true,
             auto_hide_after_organize: false,
             wallpaper_path: String::new(),
+            lock_screen_path: String::new(),
             fences: Vec::new(),
             fences_enabled: false,
             fences_after_organize: true,
@@ -235,6 +238,7 @@ mod tests {
             restore_on_exit: true,
             auto_hide_after_organize: true,
             wallpaper_path: r"C:\wallpaper.jpg".to_owned(),
+            lock_screen_path: r"D:\lockscreen.jpg".to_owned(),
             fences: Vec::new(),
             fences_enabled: true,
             fences_after_organize: false,
@@ -250,6 +254,7 @@ mod tests {
         assert!(!loaded.desktop_double_click);
         assert!(loaded.auto_hide_after_organize);
         assert_eq!(loaded.wallpaper_path, r"C:\wallpaper.jpg");
+        assert_eq!(loaded.lock_screen_path, r"D:\lockscreen.jpg");
         assert!(loaded.fences_enabled);
         assert!(!loaded.fences_after_organize);
         assert!(loaded.auto_start);

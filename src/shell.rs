@@ -803,6 +803,54 @@ mod imp {
         }
     }
 
+    /// 设置 Windows 锁屏界面（锁屏 / 登录前）的图片。
+    ///
+    /// 使用系统设置页同款的 WinRT 接口，不需要管理员权限。结果需要等待
+    /// 异步完成，调用方应放到后台线程执行。
+    pub fn set_lock_screen_wallpaper(path: &Path) -> Result<(), String> {
+        use windows::core::HSTRING;
+        use windows::Storage::StorageFile;
+        use windows::System::UserProfile::UserProfilePersonalizationSettings;
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+        if !path.is_file() {
+            return Err("锁屏图片不存在".to_owned());
+        }
+
+        // WinRT 激活要求线程初始化 COM。用 MTA 避免阻塞等待异步结果时
+        // 与 STA 的完成回调互相等待。
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let should_uninit = hr.is_ok();
+        let result = (|| -> Result<(), String> {
+            let supported = UserProfilePersonalizationSettings::IsSupported()
+                .map_err(|error| format!("无法检查锁屏设置支持情况：{error}"))?;
+            if !supported {
+                return Err("当前 Windows 版本或账户策略不允许应用修改锁屏壁纸".to_owned());
+            }
+            let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))
+                .map_err(|error| format!("无法读取锁屏图片：{error}"))?
+                .get()
+                .map_err(|error| format!("无法读取锁屏图片：{error}"))?;
+            let settings = UserProfilePersonalizationSettings::Current()
+                .map_err(|error| format!("无法访问锁屏设置：{error}"))?;
+            let changed = settings
+                .TrySetLockScreenImageAsync(&file)
+                .map_err(|error| format!("设置锁屏壁纸失败：{error}"))?
+                .get()
+                .map_err(|error| format!("设置锁屏壁纸失败：{error}"))?;
+            if changed {
+                Ok(())
+            } else {
+                Err("Windows 拒绝了锁屏壁纸修改，请检查组策略或账户类型".to_owned())
+            }
+        })();
+
+        if should_uninit {
+            unsafe { CoUninitialize() };
+        }
+        result
+    }
+
     /// Remove a fence from the taskbar / Alt-Tab without touching its content.
     pub fn make_tool_window(title: &str) {
         let title = wide(title);
@@ -1515,9 +1563,9 @@ pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
     is_elevated, relaunch_elevated, set_auto_start, set_desktop_icons_visible,
-    set_double_click_enabled, set_fence_guard, set_wallpaper, set_window_theme,
-    show_main_window, show_shell_context_menu, show_tray_balloon, start_tray, start_watchers,
-    start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
+    set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
+    set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
+    start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
 };
 
 #[cfg(not(windows))]
@@ -1540,6 +1588,9 @@ mod imp {
         Err("仅支持 Windows".to_owned())
     }
     pub fn set_wallpaper(_path: &Path) -> Result<(), String> {
+        Err("仅支持 Windows".to_owned())
+    }
+    pub fn set_lock_screen_wallpaper(_path: &Path) -> Result<(), String> {
         Err("仅支持 Windows".to_owned())
     }
     pub fn current_wallpaper() -> Option<PathBuf> {
@@ -1589,9 +1640,9 @@ pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
     is_elevated, relaunch_elevated, set_auto_start, set_desktop_icons_visible,
-    set_double_click_enabled, set_fence_guard, set_wallpaper, set_window_theme,
-    show_main_window, show_shell_context_menu, show_tray_balloon, start_tray, start_watchers,
-    start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
+    set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
+    set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
+    start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
 };
 
 #[cfg(all(test, windows))]
@@ -1605,6 +1656,12 @@ mod tests {
         let visible = desktop_icons_visible();
         println!("desktop icons visible = {visible:?}");
         assert!(visible.is_some());
+    }
+
+    #[test]
+    fn missing_lock_screen_image_is_rejected() {
+        let missing = Path::new(r"C:\DeskOrg-does-not-exist\lock.jpg");
+        assert!(set_lock_screen_wallpaper(missing).is_err());
     }
 
     #[test]
