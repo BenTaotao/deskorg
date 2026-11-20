@@ -1047,6 +1047,8 @@ mod imp {
     static FENCE_GUARD_RAISED: AtomicBool = AtomicBool::new(false);
     static FENCE_GUARD_CONTROL_HIDDEN: AtomicBool = AtomicBool::new(false);
     static FENCE_GUARD_STARTED: OnceLock<()> = OnceLock::new();
+    static CLOCK_GUARD_ENABLED: AtomicBool = AtomicBool::new(false);
+    static CLOCK_TOPMOST: AtomicBool = AtomicBool::new(false);
 
     /// 框框层级守护：Win+D 会把桌面层抬到最上面，AlwaysOnBottom 的框框
     /// 会被盖住。这里独立检测“桌面/任务栏在前台且没有其他可见应用”的
@@ -1057,6 +1059,20 @@ mod imp {
             FENCE_GUARD_RAISED.store(false, Ordering::Relaxed);
             return;
         }
+        ensure_guard_thread();
+    }
+
+    /// 时钟层级守护：最底层模式与框框共享 Show Desktop 检测；最顶层模式
+    /// 只需要保证窗口始终是 topmost。
+    pub fn set_clock_guard(enabled: bool, topmost: bool) {
+        CLOCK_TOPMOST.store(topmost, Ordering::Relaxed);
+        CLOCK_GUARD_ENABLED.store(enabled, Ordering::Relaxed);
+        if enabled {
+            ensure_guard_thread();
+        }
+    }
+
+    fn ensure_guard_thread() {
         if FENCE_GUARD_STARTED.set(()).is_err() {
             return;
         }
@@ -1068,7 +1084,9 @@ mod imp {
 
     fn fence_guard_loop() {
         loop {
-            if FENCE_GUARD_ENABLED.load(Ordering::Relaxed) {
+            if FENCE_GUARD_ENABLED.load(Ordering::Relaxed)
+                || CLOCK_GUARD_ENABLED.load(Ordering::Relaxed)
+            {
                 fence_guard_tick();
             } else if FENCE_GUARD_CONTROL_HIDDEN.swap(false, Ordering::Relaxed) {
                 // 守护关闭时如果还藏着主窗口，把它找回来。
@@ -1084,6 +1102,7 @@ mod imp {
 
     struct GuardSearch {
         fences: Vec<HWND>,
+        clocks: Vec<HWND>,
         visible_apps: usize,
         control: HWND,
         control_iconic: bool,
@@ -1101,6 +1120,10 @@ mod imp {
 
         if title.starts_with("DeskOrgFence-") {
             search.fences.push(hwnd);
+            return 1;
+        }
+        if title == crate::clock::WINDOW_TITLE {
+            search.clocks.push(hwnd);
             return 1;
         }
         if class.eq_ignore_ascii_case("Progman") || class.eq_ignore_ascii_case("WorkerW") {
@@ -1182,6 +1205,7 @@ mod imp {
 
         let mut search = GuardSearch {
             fences: Vec::new(),
+            clocks: Vec::new(),
             visible_apps: 0,
             control: null_mut(),
             control_iconic: false,
@@ -1192,14 +1216,13 @@ mod imp {
                 &mut search as *mut GuardSearch as LPARAM,
             );
         }
-        if search.fences.contains(&foreground) {
+        // 拖动时钟/框框时前台就是它自己，此时不要和原生移动循环抢层级。
+        if search.fences.contains(&foreground) || search.clocks.contains(&foreground) {
             return;
         }
 
         let raise = desktop_layer && search.visible_apps == 0;
         let raise_changed = FENCE_GUARD_RAISED.swap(raise, Ordering::Relaxed) != raise;
-        // Win+D 的桌面层是 topmost，普通 HWND_TOP 仍会被盖住。
-        let after = if raise { HWND_TOPMOST } else { HWND_BOTTOM };
 
         if raise {
             // Win+D 会把主窗口最小化，egui 暂停绘制让框框表面变空。
@@ -1225,24 +1248,49 @@ mod imp {
             search.visible_apps
         );
 
-        for hwnd in search.fences {
-            let moved = unsafe {
-                SetWindowPos(
-                    hwnd,
-                    after,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                )
+        if FENCE_GUARD_ENABLED.load(Ordering::Relaxed) {
+            // Win+D 的桌面层是 topmost，普通 HWND_TOP 仍会被盖住。
+            let after = if raise { HWND_TOPMOST } else { HWND_BOTTOM };
+            for hwnd in search.fences {
+                let moved = unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        after,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
+                };
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "fence_guard: hwnd={hwnd:?} raise={raise} moved={moved} err={:?}",
+                    std::io::Error::last_os_error()
+                );
+                let _ = moved;
+            }
+        }
+
+        if CLOCK_GUARD_ENABLED.load(Ordering::Relaxed) {
+            let after = if CLOCK_TOPMOST.load(Ordering::Relaxed) || raise {
+                HWND_TOPMOST
+            } else {
+                HWND_BOTTOM
             };
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "fence_guard: hwnd={hwnd:?} raise={raise} moved={moved} err={:?}",
-                std::io::Error::last_os_error()
-            );
-            let _ = moved;
+            for hwnd in search.clocks {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        after,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    );
+                }
+            }
         }
 
         if raise_changed {
@@ -1562,7 +1610,7 @@ mod imp {
 pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
-    is_elevated, relaunch_elevated, set_auto_start, set_desktop_icons_visible,
+    is_elevated, relaunch_elevated, set_auto_start, set_clock_guard, set_desktop_icons_visible,
     set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
     set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
     start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,
@@ -1626,6 +1674,7 @@ mod imp {
         Err("仅支持 Windows".to_owned())
     }
     pub fn set_fence_guard(_enabled: bool) {}
+    pub fn set_clock_guard(_enabled: bool, _topmost: bool) {}
     pub fn set_auto_start(_enabled: bool) -> Result<(), String> {
         Err("仅支持 Windows".to_owned())
     }
@@ -1639,7 +1688,7 @@ mod imp {
 pub use imp::{
     current_wallpaper, desktop_icons_visible, file_icon_rgba, focus_existing_window,
     hide_main_window, make_tool_window, open_in_explorer, restore_icons_after_panic,
-    is_elevated, relaunch_elevated, set_auto_start, set_desktop_icons_visible,
+    is_elevated, relaunch_elevated, set_auto_start, set_clock_guard, set_desktop_icons_visible,
     set_double_click_enabled, set_fence_guard, set_lock_screen_wallpaper, set_wallpaper,
     set_window_theme, show_main_window, show_shell_context_menu, show_tray_balloon, start_tray,
     start_watchers, start_window_drag, stop_tray, tray_alive, virtual_desktop_rect,

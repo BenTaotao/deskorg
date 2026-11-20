@@ -12,6 +12,7 @@ use eframe::egui::{
     self, Align, Align2, Color32, FontId, Id, Layout, RichText, Sense, Stroke, Ui, Vec2,
 };
 
+use crate::clock;
 use crate::config::{Config, UndoState};
 use crate::desktop::{
     self, Category, DesktopItem, DesktopOrigin, MoveRecord, OrganizeReport, ScanResult, UndoReport,
@@ -26,15 +27,17 @@ enum Page {
     Overview,
     Organize,
     Fences,
+    Clock,
     Beauty,
     Settings,
 }
 
 impl Page {
-    const ALL: [(Self, &'static str, &'static str); 5] = [
+    const ALL: [(Self, &'static str, &'static str); 6] = [
         (Self::Overview, "总", "总览"),
         (Self::Organize, "整", "桌面整理"),
         (Self::Fences, "框", "桌面框框"),
+        (Self::Clock, "钟", "桌面时钟"),
         (Self::Beauty, "美", "美化"),
         (Self::Settings, "设", "设置"),
     ];
@@ -44,6 +47,7 @@ impl Page {
             Self::Overview => "总览",
             Self::Organize => "桌面整理",
             Self::Fences => "桌面框框",
+            Self::Clock => "桌面时钟",
             Self::Beauty => "美化",
             Self::Settings => "设置",
         }
@@ -54,6 +58,7 @@ impl Page {
             Self::Overview => "让桌面，只留下重要的事。",
             Self::Organize => "按类型归位，随时可撤销。",
             Self::Fences => "把分类装进透明盒子里。",
+            Self::Clock => "让时间安静地停在桌面上。",
             Self::Beauty => "壁纸、配色与清爽模式。",
             Self::Settings => "整理范围、手势与归档位置。",
         }
@@ -158,6 +163,8 @@ pub struct DeskOrgApp {
     last_fence_refresh: Instant,
     config_dirty: bool,
     fence_viewports_created: HashSet<u64>,
+    clock_viewport_created: bool,
+    clock_was_showing: bool,
     last_config_save: Instant,
     new_fence_open: bool,
     new_fence_category: Category,
@@ -313,6 +320,8 @@ impl DeskOrgApp {
             last_fence_refresh: Instant::now(),
             config_dirty: false,
             fence_viewports_created: HashSet::new(),
+            clock_viewport_created: false,
+            clock_was_showing: false,
             last_config_save: Instant::now(),
             new_fence_open: false,
             new_fence_category: Category::Image,
@@ -2485,6 +2494,183 @@ impl DeskOrgApp {
         }
     }
 
+    fn show_clock(&mut self, ui: &mut Ui, p: &Palette) {
+        if self.page_header(ui, p) {
+            self.start_background_scan();
+        }
+
+        let enabled = self.config.clock.enabled;
+        let topmost = self.config.clock.topmost;
+        let scale = self.config.clock.scale;
+        let opacity = self.config.clock.opacity;
+        let mut toggle = false;
+
+        theme::card_frame(*p).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        let _ = widgets::pill(ui, p, "CLOCK", p.accent_ink);
+                        ui.label(
+                            RichText::new("桌面时钟")
+                                .size(22.0)
+                                .strong()
+                                .color(p.text),
+                        );
+                    });
+                    ui.label(
+                        RichText::new("年月日小字、时分秒大字；直接拖动时钟即可移动位置。")
+                            .size(11.5)
+                            .color(p.muted),
+                    );
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::primary_button(
+                        ui,
+                        p,
+                        if enabled { "隐藏时钟" } else { "显示时钟" },
+                        108.0,
+                    )
+                    .clicked()
+                    {
+                        toggle = true;
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                let _ = widgets::pill(
+                    ui,
+                    p,
+                    if enabled { "显示中" } else { "已关闭" },
+                    if enabled { p.success } else { p.faint },
+                );
+                let _ = widgets::pill(
+                    ui,
+                    p,
+                    if topmost { "最顶层" } else { "桌面层" },
+                    p.accent_ink,
+                );
+                let _ = widgets::pill(ui, p, &format!("大小 {:.0}%", scale * 100.0), p.text);
+                let _ = widgets::pill(ui, p, &format!("背景 {:.0}%", opacity * 100.0), p.text);
+            });
+        });
+
+        ui.add_space(14.0);
+
+        let mut new_topmost = topmost;
+        let mut new_scale = scale;
+        let mut new_opacity = opacity;
+        let mut show_weekday = self.config.clock.show_weekday;
+        let mut weekday_changed = false;
+
+        theme::card_frame(*p).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("显示设置")
+                    .size(16.0)
+                    .strong()
+                    .color(p.text),
+            );
+            ui.label(
+                RichText::new("调整后立即生效，并自动保存")
+                    .size(11.0)
+                    .color(p.faint),
+            );
+            ui.add_space(6.0);
+
+            ui.label(RichText::new("层级").size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(
+                    "最顶层：任何时候都能看到；桌面层：被普通窗口遮住，回到桌面才看到。",
+                )
+                .size(10.5)
+                .color(p.faint),
+            );
+            ui.horizontal(|ui| {
+                if segmented(ui, p, "最顶层", new_topmost).clicked() {
+                    new_topmost = true;
+                }
+                if segmented(ui, p, "桌面层（最底层）", !new_topmost).clicked() {
+                    new_topmost = false;
+                }
+            });
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("大小").size(12.0).color(p.muted));
+                ui.spacing_mut().slider_width = 240.0;
+                ui.add(
+                    egui::Slider::new(&mut new_scale, clock::MIN_SCALE..=clock::MAX_SCALE)
+                        .show_value(false)
+                        .trailing_fill(true),
+                );
+                ui.label(
+                    RichText::new(format!("{:.0}%", new_scale * 100.0))
+                        .size(10.5)
+                        .color(p.faint),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("背景不透明度").size(12.0).color(p.muted));
+                ui.spacing_mut().slider_width = 240.0;
+                ui.add(
+                    egui::Slider::new(&mut new_opacity, 0.0..=1.0)
+                        .show_value(false)
+                        .trailing_fill(true),
+                );
+                ui.label(
+                    RichText::new(format!("{:.0}%", new_opacity * 100.0))
+                        .size(10.5)
+                        .color(p.faint),
+                );
+            });
+            weekday_changed = widgets::toggle_row(
+                ui,
+                p,
+                "显示星期",
+                "日期后面显示“周X”，例如 2026-11-20 周五",
+                &mut show_weekday,
+            );
+            ui.label(
+                RichText::new("背景 0% 时完全透明，只留下数字。")
+                    .size(10.0)
+                    .color(p.faint),
+            );
+        });
+
+        if toggle {
+            self.config.clock.enabled = !self.config.clock.enabled;
+            if self.config.clock.enabled && self.config.clock.pos.is_none() {
+                let size = self.config.clock.size();
+                self.config.clock.pos = Some(clock::default_position(
+                    self.desktop_origin,
+                    self.desktop_size,
+                    size,
+                ));
+            }
+            self.save_config();
+            ui.ctx().request_repaint();
+        }
+        if new_topmost != self.config.clock.topmost {
+            self.config.clock.topmost = new_topmost;
+            self.config_dirty = true;
+            ui.ctx().request_repaint();
+        }
+        if (new_scale - self.config.clock.scale).abs() > 0.0001 {
+            self.config.clock.scale = new_scale;
+            self.config_dirty = true;
+        }
+        if (new_opacity - self.config.clock.opacity).abs() > 0.0001 {
+            self.config.clock.opacity = new_opacity;
+            self.config_dirty = true;
+        }
+        if weekday_changed {
+            self.config.clock.show_weekday = show_weekday;
+            self.config_dirty = true;
+        }
+    }
+
     fn open_fence_folder(&mut self, category: Category) {
         let path = self.target().join(category.folder_name());
         let _ = std::fs::create_dir_all(&path);
@@ -2749,6 +2935,94 @@ impl DeskOrgApp {
                     }
                 }
             }
+        }
+    }
+
+    fn show_clock_viewport(&mut self, ctx: &egui::Context) {
+        let enabled = self.config.clock.enabled;
+        if !enabled && !self.clock_viewport_created {
+            shell::set_clock_guard(false, false);
+            self.clock_was_showing = false;
+            return;
+        }
+
+        self.config.clock.clamp();
+        if self.config.clock.pos.is_none() {
+            let size = self.config.clock.size();
+            self.config.clock.pos = Some(clock::default_position(
+                self.desktop_origin,
+                self.desktop_size,
+                size,
+            ));
+            self.config_dirty = true;
+        }
+
+        let clock = self.config.clock.clone();
+        let was_showing = self.clock_was_showing;
+        let include_geometry = !self.clock_viewport_created;
+        let desired_size = clock.size();
+
+        let result = ctx.show_viewport_immediate(
+            clock::viewport_id(),
+            clock_viewport_builder(&clock, include_geometry),
+            |ui, _class| {
+                if !enabled {
+                    return (None, None);
+                }
+                clock::draw(ui, &clock);
+                let outer = ui.ctx().input(|input| input.viewport().outer_rect);
+                let inner = ui.ctx().input(|input| input.viewport().inner_rect);
+                (outer, inner)
+            },
+        );
+
+        if include_geometry {
+            shell::make_tool_window(clock::WINDOW_TITLE);
+            self.clock_viewport_created = true;
+        }
+
+        if enabled && !was_showing {
+            let pos = clock.pos.unwrap_or([0.0, 0.0]);
+            let id = clock::viewport_id();
+            ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd_to(
+                id,
+                egui::ViewportCommand::OuterPosition(egui::pos2(pos[0], pos[1])),
+            );
+            ctx.send_viewport_cmd_to(id, egui::ViewportCommand::InnerSize(desired_size));
+        }
+
+        if self.config.clock.enabled {
+            self.clock_was_showing = true;
+            shell::set_clock_guard(true, clock.topmost);
+            if let Some(rect) = result.0 {
+                if let Some(pos) = &mut self.config.clock.pos {
+                    if (rect.min.x - pos[0]).abs() > 1.0 || (rect.min.y - pos[1]).abs() > 1.0 {
+                        *pos = [rect.min.x, rect.min.y];
+                        self.config_dirty = true;
+                    }
+                }
+            }
+            if let Some(rect) = result.1 {
+                if (rect.width() - desired_size.x).abs() > 1.0
+                    || (rect.height() - desired_size.y).abs() > 1.0
+                {
+                    ctx.send_viewport_cmd_to(
+                        clock::viewport_id(),
+                        egui::ViewportCommand::InnerSize(desired_size),
+                    );
+                }
+            }
+        } else {
+            shell::set_clock_guard(false, false);
+            if was_showing {
+                // 与框框一致：保留 immediate viewport，只把它停到屏幕外。
+                ctx.send_viewport_cmd_to(
+                    clock::viewport_id(),
+                    egui::ViewportCommand::OuterPosition(egui::pos2(-24000.0, -24000.0)),
+                );
+            }
+            self.clock_was_showing = false;
         }
     }
 
@@ -3527,6 +3801,7 @@ impl eframe::App for DeskOrgApp {
                             Page::Overview => self.show_overview(ui, &p),
                             Page::Organize => self.show_organize(ui, &p),
                             Page::Fences => self.show_fences_page(ui, &p),
+                            Page::Clock => self.show_clock(ui, &p),
                             Page::Beauty => self.show_beauty(ui, &p),
                             Page::Settings => self.show_settings(ui, &p),
                         }
@@ -3537,11 +3812,16 @@ impl eframe::App for DeskOrgApp {
         self.new_fence_modal(ui.ctx(), &p);
         self.confirm_modal(ui.ctx(), &p);
         self.job_overlay(ui.ctx(), &p);
-        if self.config.fences_enabled || self.config.close_to_background || self.start_background {
+        if self.config.fences_enabled
+            || self.config.close_to_background
+            || self.start_background
+            || self.config.clock.enabled
+        {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         }
         self.show_fence_viewports(ui.ctx());
+        self.show_clock_viewport(ui.ctx());
         self.toast(ui.ctx(), &p);
         self.flush_config_if_due();
     }
@@ -3585,6 +3865,30 @@ fn fence_viewport_builder(fence: &Fence, include_geometry: bool) -> egui::Viewpo
         builder = builder
             .with_position([fence.x, fence.y])
             .with_inner_size([fence.w, fence.h]);
+    }
+    builder
+}
+
+fn clock_viewport_builder(
+    settings: &clock::Clock,
+    include_geometry: bool,
+) -> egui::ViewportBuilder {
+    let mut builder = egui::ViewportBuilder::default()
+        .with_title(clock::WINDOW_TITLE)
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_transparent(true)
+        .with_taskbar(false)
+        .with_active(false)
+        .with_visible(true)
+        .with_window_level(if settings.topmost {
+            egui::WindowLevel::AlwaysOnTop
+        } else {
+            egui::WindowLevel::AlwaysOnBottom
+        });
+    if include_geometry {
+        let pos = settings.pos.unwrap_or([0.0, 0.0]);
+        builder = builder.with_position(pos).with_inner_size(settings.size());
     }
     builder
 }

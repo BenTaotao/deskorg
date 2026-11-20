@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::clock::Clock;
 use crate::desktop::MoveRecord;
 use crate::fences::Fence;
 
@@ -41,6 +42,8 @@ pub struct Config {
     pub auto_start: bool,
     /// Keep running in the background when the main window is closed.
     pub close_to_background: bool,
+    /// Floating desktop clock.
+    pub clock: Clock,
 }
 
 impl Default for Config {
@@ -60,6 +63,7 @@ impl Default for Config {
             fences_after_organize: true,
             auto_start: false,
             close_to_background: false,
+            clock: Clock::default(),
         }
     }
 }
@@ -244,6 +248,14 @@ mod tests {
             fences_after_organize: false,
             auto_start: true,
             close_to_background: true,
+            clock: Clock {
+                enabled: true,
+                topmost: true,
+                show_weekday: false,
+                scale: 1.5,
+                opacity: 0.5,
+                pos: Some([120.0, 80.0]),
+            },
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
@@ -259,6 +271,11 @@ mod tests {
         assert!(!loaded.fences_after_organize);
         assert!(loaded.auto_start);
         assert!(loaded.close_to_background);
+        assert!(loaded.clock.enabled);
+        assert!(loaded.clock.topmost);
+        assert!(!loaded.clock.show_weekday);
+        assert!((loaded.clock.scale - 1.5).abs() < 1e-6);
+        assert_eq!(loaded.clock.pos, Some([120.0, 80.0]));
         let _ = fs::remove_file(path);
     }
 
